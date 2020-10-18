@@ -1,0 +1,140 @@
+
+val df = spark.read.format("csv").option("inferSchema","true").option("header","true").load("groceries/Groceries_dataset.csv")
+
+scala> df.printSchema
+root
+ |-- Member_number: integer (nullable = true)
+ |-- Date: string (nullable = true)
+ |-- itemDescription: string (nullable = true)
+ 
+scala> df.orderBy("Member_number","Date").show
++-------------+----------+-------------------+
+|Member_number|      Date|    itemDescription|
++-------------+----------+-------------------+
+|         1000|15-03-2015|semi-finished bread|
+|         1000|15-03-2015|             yogurt|
+|         1000|15-03-2015|            sausage|
+|         1000|15-03-2015|         whole milk|
+|         1000|24-06-2014|             pastry|
+|         1000|24-06-2014|        salty snack|
+|         1000|24-06-2014|         whole milk|
+|         1000|24-07-2015|    misc. beverages|
+|         1000|24-07-2015|        canned beer|
+|         1000|25-11-2015|            sausage|
+|         1000|25-11-2015|   hygiene articles|
+|         1000|27-05-2015|               soda|
+|         1000|27-05-2015| pickled vegetables|
+|         1001|02-05-2015|               curd|
+|         1001|02-05-2015|        frankfurter|
+|         1001|07-02-2014|         whole milk|
+|         1001|07-02-2014|         rolls/buns|
+|         1001|07-02-2014|            sausage|
+|         1001|12-12-2014|         whole milk|
+|         1001|12-12-2014|               soda|
++-------------+----------+-------------------+
+ 
+scala> df.groupBy("Member_number","Date").count.show
++-------------+----------+-----+
+|Member_number|      Date|count|
++-------------+----------+-----+
+|         2747|05-07-2015|    2|
+|         4670|11-10-2015|    2|
+|         1668|21-08-2015|    2|
+|         1843|27-11-2015|    2|
+|         2264|12-01-2015|    2|
+|         3305|24-06-2015|    2|
+|         1239|02-07-2015|    2|
+|         2171|28-07-2015|    2|
+|         3661|27-11-2015|    3|
+|         1340|23-01-2015|    2|
+|         1135|24-02-2015|    2|
+|         4839|03-06-2015|    2|
+|         2643|08-11-2015|    2|
+|         3953|13-05-2015|    3|
+|         3389|17-08-2015|    3|
+|         3998|28-03-2015|    4|
+|         4919|12-03-2015|    4|
+|         3922|01-04-2015|    4|
+|         2589|29-04-2015|    3|
+|         2415|08-08-2015|    6|
++-------------+----------+-----+
+
+scala> df.select("itemDescription").distinct.count
+res4: Long = 167
+
+val rdd = df.rdd.map( x => x.toSeq.toArray)
+
+val rdd1 = rdd.map( x => (x(0).toString + ":" + x(1).toString,x(2).toString.trim))
+
+val prods = rdd1.aggregateByKey(List[String]())(
+  (prods, tran) => prods ::: List(tran),
+  (prods1, prods2) => prods1 ::: prods2)
+  
+val tokens = prods.map( x => x._2.toSeq )
+
+---------------------------
+
+import org.apache.spark.mllib.linalg.{ SparseVector => SV }
+import org.apache.spark.mllib.feature.HashingTF
+import org.apache.spark.mllib.feature.IDF
+
+val dim = math.pow(2, 8).toInt
+val hashingTF = new HashingTF(dim)
+
+-- transform function of HashingTF maps each input document (that is, a sequence of tokens) to an MLlib Vector.
+val tf = hashingTF.transform(tokens)
+
+--------------------
+
+import org.apache.spark.mllib.linalg.Matrix
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+
+val matrix = new RowMatrix(tf)
+
+
+---------------------------
+
+val categories = rdd1.map(x => x._2).distinct.zipWithIndex.collect.toMap
+categories: scala.collection.immutable.Map[String,Long] = Map(long life bakery product -> 138, pip fruit -> 141, ketchup -> 27, softener -> 14, canned beer -> 63, cereals -> 72, margarine -> 114, sauces -> 33, dental care -> 40, prosecco -> 146, frankfurter -> 17, frozen chicken -> 82, canned vegetables -> 144, candy -> 143, fruit/vegetable juice -> 12, red/blush wine -> 103, frozen dessert -> 83, rum -> 7, honey -> 151, UHT-milk -> 85, flower (seeds) -> 104, make up remover -> 127, cling film/bags -> 99, chocolate -> 113, roll products -> 1, bottled water -> 123, cleaner -> 46, meat spreads -> 51, other vegetables -> 150, sugar -> 80, cocoa drinks -> 119, dishes -> 153, citrus fruit -> 66, curd -> 135, tea -> 163, frozen meals -> 45, pork -> 4, dog food -> 97, cake bar -> 134, sparklin...
+
+val tokens = prods.map( x => x._2.toArray )
+
+val numCategories = df.select("itemDescription").distinct.count.toInt
+numCategories: Int = 167
+
+val prodvect = tokens.map( x => {
+   val vect = Array.ofDim[Double](numCategories)
+   for (word <- x) vect(categories(word).toInt) = 1
+   vect })
+
+import org.apache.spark.mllib.linalg.Vectors
+
+val vect = prodvect.map( x => Vectors.dense(x))
+
+vect.count
+res12: Long = 14963
+
+import org.apache.spark.mllib.linalg.Matrix
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+
+val matrix = new RowMatrix(vect)
+
+val colsims = matrix.columnSimilarities()
+val mat1 = colsims.toRowMatrix
+
+import org.apache.spark.mllib.linalg.distributed.MatrixEntry
+val transformedRDD = colsims.entries.map{case MatrixEntry(row: Long, col:Long, sim:Double) => ((row,col),sim)}
+
+val rep = transformedRDD.sortBy(_._1).map(x => ((x._1._1,x._1._2),x._2))
+
+rep.take(50)
+res15: Array[((Long, Long), Double)] = Array(((0,1),0.032178174010510804), ((0,2),0.009712858623572643), ((0,4),0.012368636620545385), ((0,6),0.009490083891051625), ((0,8),0.011671782297892636), ((0,12),0.01722059557727836), ((0,15),0.021676316845553826), ((0,17),0.012258691002414161), ((0,20),0.006608763214317867), ((0,21),0.026111406173641653), ((0,23),0.007342230982143523), ((0,25),0.017456074685212826), ((0,26),0.011446713662390752), ((0,27),0.017170070493586126), ((0,29),0.01289330138147996), ((0,30),0.01803632566770216), ((0,32),0.020707884164064553), ((0,34),0.07009651926150554), ((0,35),0.0037980282716857674), ((0,38),0.015051913260413574), ((0,40),0.016907916618206113), ((0,41),0.011159782971115015), ((0,43),0.0040934818577378195), ((0,45),0.006130702001279283), ((0,52),0.01535...
+
+val invcateg = categories.map{ case (x,y) => (y,x) }
+invcateg: scala.collection.immutable.Map[Long,String] = Map(69 -> frozen fruits, 138 -> long life bakery product, 101 -> potato products, 0 -> seasonal products, 88 -> popcorn, 115 -> beverages, 5 -> snack products, 120 -> skin care, 10 -> organic products, 56 -> newspapers, 142 -> nuts/prunes, 153 -> dishes, 42 -> liqueur, 24 -> cream, 37 -> pudding powder, 25 -> pastry, 52 -> spices, 14 -> softener, 110 -> kitchen towels, 125 -> herbs, 157 -> mayonnaise, 20 -> grapes, 46 -> cleaner, 93 -> candles, 152 -> hygiene articles, 57 -> nut snack, 78 -> white bread, 29 -> ice cream, 164 -> cookware, 106 -> dessert, 121 -> whisky, 84 -> coffee, 147 -> bathroom cleaner, 61 -> pasta, 132 -> turkey, 89 -> shopping bags, 133 -> flour, 116 -> oil, 1 -> roll products, 74 -> organic sausage, 6 -> froz...
+
+rep.foreach( x => println(invcateg(x._1._1)+","+invcateg(x._1._2)+","+x._2))
+
+val saida = rep.map( x => invcateg(x._1._1)+","+invcateg(x._1._2)+","+x._2)
+ 
+saida.saveAsTextFile("basketanalysis")

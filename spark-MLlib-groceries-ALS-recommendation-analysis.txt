@@ -1,0 +1,114 @@
+
+val df = spark.read.format("csv").option("inferSchema","true").option("header","true").load("groceries/Groceries_dataset.csv")
+
+scala> df.printSchema
+root
+ |-- Member_number: integer (nullable = true)
+ |-- Date: string (nullable = true)
+ |-- itemDescription: string (nullable = true)
+ 
+scala> df.orderBy("Member_number","Date").show
++-------------+----------+-------------------+
+|Member_number|      Date|    itemDescription|
++-------------+----------+-------------------+
+|         1000|15-03-2015|semi-finished bread|
+|         1000|15-03-2015|             yogurt|
+|         1000|15-03-2015|            sausage|
+|         1000|15-03-2015|         whole milk|
+|         1000|24-06-2014|             pastry|
+|         1000|24-06-2014|        salty snack|
+|         1000|24-06-2014|         whole milk|
+|         1000|24-07-2015|    misc. beverages|
+|         1000|24-07-2015|        canned beer|
+|         1000|25-11-2015|            sausage|
+|         1000|25-11-2015|   hygiene articles|
+|         1000|27-05-2015|               soda|
+|         1000|27-05-2015| pickled vegetables|
+|         1001|02-05-2015|               curd|
+|         1001|02-05-2015|        frankfurter|
+|         1001|07-02-2014|         whole milk|
+|         1001|07-02-2014|         rolls/buns|
+|         1001|07-02-2014|            sausage|
+|         1001|12-12-2014|         whole milk|
+|         1001|12-12-2014|               soda|
++-------------+----------+-------------------+
+ 
+scala> df.groupBy("Member_number","Date").count.show
++-------------+----------+-----+
+|Member_number|      Date|count|
++-------------+----------+-----+
+|         2747|05-07-2015|    2|
+|         4670|11-10-2015|    2|
+|         1668|21-08-2015|    2|
+|         1843|27-11-2015|    2|
+|         2264|12-01-2015|    2|
+|         3305|24-06-2015|    2|
+|         1239|02-07-2015|    2|
+|         2171|28-07-2015|    2|
+|         3661|27-11-2015|    3|
+|         1340|23-01-2015|    2|
+|         1135|24-02-2015|    2|
+|         4839|03-06-2015|    2|
+|         2643|08-11-2015|    2|
+|         3953|13-05-2015|    3|
+|         3389|17-08-2015|    3|
+|         3998|28-03-2015|    4|
+|         4919|12-03-2015|    4|
+|         3922|01-04-2015|    4|
+|         2589|29-04-2015|    3|
+|         2415|08-08-2015|    6|
++-------------+----------+-----+
+
+val rdd = df.rdd.map( x => x.toSeq.toArray)
+
+val rdd1 = rdd.map( x => (x(0).toString + ":" + x(1).toString,x(2).toString.trim))
+
+val prods = rdd1.aggregateByKey(List[String]())(
+  (prods, tran) => prods ::: List(tran),
+  (prods1, prods2) => prods1 ::: prods2)
+  
+prods.take(10)
+res7: Array[(String, List[String])] = Array((1477:14-03-2014,List(packaged fruit/vegetables, beverages)), (4468:12-03-2014,List(onions, bottled water, sliced cheese)), (3584:14-03-2015,List(meat, photo/film)), (3584:17-12-2015,List(other vegetables, whole milk)), (4298:22-03-2014,List(whole milk, margarine, dessert)), (1452:25-11-2015,List(tropical fruit, other vegetables, rice)), (1707:22-12-2014,List(bottled beer, brown bread)), (4326:29-09-2015,List(pork, root vegetables, rolls/buns)), (2899:08-01-2014,List(frankfurter, canned beer, soda)), (3491:06-06-2015,List(fruit/vegetable juice, root vegetables)))
+
+val crossprod = prods.map{ x => {
+   val lprod = x._2
+   val cross = lprod.flatMap( x => lprod.map( y => { if (x != y) (x,y) else () } ))
+   cross
+ }}
+ 
+crossprod.take(10)
+res11: Array[List[Any]] = Array(List((), (packaged fruit/vegetables,beverages), (beverages,packaged fruit/vegetables), ()), List((), (onions,bottled water), (onions,sliced cheese), (bottled water,onions), (), (bottled water,sliced cheese), (sliced cheese,onions), (sliced cheese,bottled water), ()), List((), (meat,photo/film), (photo/film,meat), ()), List((), (other vegetables,whole milk), (whole milk,other vegetables), ()), List((), (whole milk,margarine), (whole milk,dessert), (margarine,whole milk), (), (margarine,dessert), (dessert,whole milk), (dessert,margarine), ()), List((), (tropical fruit,other vegetables), (tropical fruit,rice), (other vegetables,tropical fruit), (), (other vegetables,rice), (rice,tropical fruit), (rice,other vegetables), ()), List((), (bottled beer,brown brea...
+
+val crossflat = crossprod.flatMap( x => x ).filter( x => x != ())
+
+crossflat.take(10)
+res12: Array[Any] = Array((packaged fruit/vegetables,beverages), (beverages,packaged fruit/vegetables), (onions,bottled water), (onions,sliced cheese), (bottled water,onions), (bottled water,sliced cheese), (sliced cheese,onions), (sliced cheese,bottled water), (meat,photo/film), (photo/film,meat))
+
+val totalcross = crossflat.map{ case (x,y) => ((x.toString,y.toString),1) }.reduceByKey(_+_)
+
+totalcross.take(10)
+res16: Array[((String, String), Int)] = Array(((ham,sausage),4), ((male cosmetics,canned beer),4), ((baking powder,butter milk),3), ((abrasive cleaner,root vegetables),2), ((berries,candles),1), ((shopping bags,mustard),3), ((sweet spreads,chicken),1), ((bottled water,seasonal products),7), ((chocolate marshmallow,hard cheese),1), ((soft cheese,whole milk),19))
+
+val categories = rdd1.map(x => x._2).distinct.zipWithIndex.collect.toMap
+categories: scala.collection.immutable.Map[String,Long] = Map(long life bakery product -> 138, pip fruit -> 141, ketchup -> 27, softener -> 14, canned beer -> 63, cereals -> 72, margarine -> 114, sauces -> 33, dental care -> 40, prosecco -> 146, frankfurter -> 17, frozen chicken -> 82, canned vegetables -> 144, candy -> 143, fruit/vegetable juice -> 12, red/blush wine -> 103, frozen dessert -> 83, rum -> 7, honey -> 151, UHT-milk -> 85, flower (seeds) -> 104, make up remover -> 127, cling film/bags -> 99, chocolate -> 113, roll products -> 1, bottled water -> 123, cleaner -> 46, meat spreads -> 51, other vegetables -> 150, sugar -> 80, cocoa drinks -> 119, dishes -> 153, citrus fruit -> 66, curd -> 135, tea -> 163, frozen meals -> 45, pork -> 4, dog food -> 97, cake bar -> 134, sparklin...
+
+val invcateg = categories.map{ case (x,y) => (y,x) }
+
+invcateg.take(10)
+res26: scala.collection.immutable.Map[Long,String] = Map(69 -> frozen fruits, 138 -> long life bakery product, 101 -> potato products, 0 -> seasonal products, 88 -> popcorn, 115 -> beverages, 5 -> snack products, 120 -> skin care, 10 -> organic products, 56 -> newspapers)
+ 
+import org.apache.spark.mllib.recommendation.Rating
+
+val ratings = totalcross.map{ case(x,y) => Rating(categories(x._1.toString).toInt,categories(x._2.toString).toInt,y.toString.toDouble) }
+
+ratings.take(10)
+res18: Array[org.apache.spark.mllib.recommendation.Rating] = Array(Rating(58,118,4.0), Rating(79,63,4.0), Rating(129,95,3.0), Rating(32,38,2.0), Rating(136,93,1.0), Rating(89,102,3.0), Rating(54,60,1.0), Rating(123,0,7.0), Rating(139,70,1.0), Rating(137,107,19.0))
+
+import org.apache.spark.mllib.recommendation.ALS
+
+val model = ALS.train(ratings, 50, 10, 0.01)
+
+val topKRecs = model.recommendProducts(2,10)
+
+topKRecs.map{ rating => println(invcateg(rating.user) + " -> " + invcateg(rating.product) + " :  " + rating.rating) }
+
