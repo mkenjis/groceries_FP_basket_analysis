@@ -1,3 +1,4 @@
+---- Feature extraction & Data Munging --------------
 
 val df = spark.read.format("csv").option("inferSchema","true").option("header","true").load("groceries/Groceries_dataset.csv")
 
